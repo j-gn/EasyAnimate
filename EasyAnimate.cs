@@ -3,12 +3,15 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-public static class EasyAnimate
+public class EasyAnimate
 {
-    static Dictionary<int, IState> _animStates = new Dictionary<int, IState>();
+    //static Dictionary<object, Dictionary<string, IState>> _animStates = new Dictionary<object, Dictionary<string, IState>>();
+    Dictionary<int, IState> _animStates = new Dictionary<int, IState>();
+    
     public interface IState {
         //returns true as long as object wants to exist
         bool Update(float pCurrentTime);
+        void Complete();
     }
     
     public struct State<T> : IState {
@@ -27,12 +30,13 @@ public static class EasyAnimate
         /// <param name="pCurrentTime">current time in seconds</param>
         /// <returns>true if still animating, false if done</returns>
         public bool Update( float pCurrentTime ){
-            if ((startTime + length) <= pCurrentTime) {
-                if (setter != null) { setter(endValue); }
-                if (onCompleted != null) { onCompleted(); }
+            if (startTime > pCurrentTime) { //before the animation starts
+                return true;
+            }
+            if ((startTime + length) <= pCurrentTime) { //the animation has ended
                 return false;
             }
-            else {
+            else { //while animating
                 if (setter != null) {
                     setter(interpolator(startValue, endValue, (pCurrentTime - startTime) / length));
                 }
@@ -40,43 +44,87 @@ public static class EasyAnimate
             }
 
         }
+        public void Complete() {
+            if (setter != null) { setter(endValue); }
+            if (onCompleted != null) {
+                onCompleted();
+            }
+        }
     }
 
     /// <summary>
     /// Add a new animation state to the manager only if no animation with the same object and channel is not playing
     /// </summary>
-    /// <param name="o">an object associated with the animation</param>
+    
     /// <param name="pChannel">a name token</param>
     /// <param name="pState">an EasyAnimate.State object</param>
-    public static void SetIfVacant(object o, string pChannel, IState pState) {
-        if (!_animStates.ContainsKey(GetHash(o, pChannel)))
-            _animStates[GetHash(o, pChannel)] = pState;
+    public void SetIfVacant(string pChannel, IState pState) {
+        if (!_animStates.ContainsKey(GetHash(pChannel)))
+            _animStates[GetHash(pChannel)] = pState;
     }
     /// <summary>
     /// Add a new animation state to the manager
     /// </summary>
-    /// <param name="o">an object associated with the animation</param>
+    
     /// <param name="pChannel">a name token</param>
     /// <param name="pState">an EasyAnimate.State object</param>
-    public static void Set(object o, string pChannel, IState pState) {
-        _animStates[GetHash(o, pChannel)] =  pState;
+    public void Set(string pChannel, IState pState) {
+        
+        _animStates[GetHash(pChannel)] =  pState;
+
+    }
+    
+
+    public T Get<T>(string pChannel) where T : IState {
+        int hash = GetHash( pChannel);
+        IState result;
+        if (_animStates.TryGetValue(hash, out result)) {
+            if (result is T) {
+                return (T)result;
+            }
+            else {
+                throw new InvalidCastException("could not cast object of type " + result.GetType().Name + " to " + typeof(T).Name);
+            }
+        }
+        else {
+            return default(T);
+        }
     }
 
-    internal static void Update(){
+    internal void Update(){
         foreach (KeyValuePair<int, IState> kv in _animStates.ToArray()) {
             int key = kv.Key;
             IState e = kv.Value;
-            if(!e.Update(Time.time))
+            if (!e.Update(Time.time)) {
                 _animStates.Remove(key);
+                e.Complete(); //must be called after key is removed in case the complete event triggers a reuse of the key.
+            }
         }
     }
     /// <summary>
     /// tries to stop an animation
     /// </summary>
     /// <returns>true if an animation was stopped</returns>
-    public static bool Stop(object o, string pChannel) { 
-        int hash = GetHash(o,pChannel);
+    public bool Stop(string pChannel) { 
+        int hash = GetHash(pChannel);
         if (_animStates.ContainsKey(hash)) {
+            _animStates.Remove(hash);
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// tries to complete an animation
+    /// </summary>
+    /// <returns>true if an animation was stopped</returns>
+    public bool Complete(string pChannel) {
+        int hash = GetHash(pChannel);
+        EasyAnimate.IState output;
+        if (_animStates.TryGetValue(hash, out output)) {
+            output.Complete();
             _animStates.Remove(hash);
             return true;
         }
@@ -86,13 +134,21 @@ public static class EasyAnimate
 
     }
 
-    internal static void Clear() {
+    internal void Clear() {
         _animStates.Clear();
     }
 
-    private static int GetHash(object o, string pChannel)
+    private int GetHash( string pChannel)
     {
-        return o.GetHashCode() ^ pChannel.GetHashCode();
+        return pChannel.GetHashCode();
     }
 
+
+    internal bool HasState( string pChannel) {
+        int hash = GetHash(pChannel);
+        if (_animStates.ContainsKey(hash)) {
+            return true;
+        }
+        return false;
+    }
 }
