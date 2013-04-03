@@ -4,14 +4,13 @@ using System.Linq;
 using UnityEngine;
 
 public class EasyAnimate
-{
-    //static Dictionary<object, Dictionary<string, IState>> _animStates = new Dictionary<object, Dictionary<string, IState>>();
-    Dictionary<int, IState> _animStates = new Dictionary<int, IState>();
-    
+{  
     public interface IState {
         //returns true as long as object wants to exist
         bool Update(float pCurrentTime);
         void Complete();
+        bool Paused{ get; set; }
+        float StartTime { get; set; }
     }
     
     public struct State<T> : IState {
@@ -19,7 +18,7 @@ public class EasyAnimate
         public delegate T EAInterpolate(T pFrom, T pTo, float pQuota);
         public T startValue;
         public T endValue; 
-        public float startTime;
+        public float StartTime{ get; set; }
         public float length; //length of animation in seconds
         public Action onCompleted; //action done on complete, does not fire if dissmissed or cleared
         public EAInterpolate interpolator; //function used to interpolate a value over time
@@ -30,19 +29,18 @@ public class EasyAnimate
         /// <param name="pCurrentTime">current time in seconds</param>
         /// <returns>true if still animating, false if done</returns>
         public bool Update( float pCurrentTime ){
-            if (startTime > pCurrentTime) { //before the animation starts
+            if (StartTime > pCurrentTime) { //before the animation starts
                 return true;
             }
-            if ((startTime + length) <= pCurrentTime) { //the animation has ended
+            if ((StartTime + length) <= pCurrentTime) { //the animation has ended
                 return false;
             }
             else { //while animating
                 if (setter != null) {
-                    setter(interpolator(startValue, endValue, (pCurrentTime - startTime) / length));
+                    setter(interpolator(startValue, endValue, (pCurrentTime - StartTime) / length));
                 }
                 return true;
             }
-
         }
         public void Complete() {
             if (setter != null) { setter(endValue); }
@@ -50,7 +48,15 @@ public class EasyAnimate
                 onCompleted();
             }
         }
+        public bool Paused {
+            set;
+            get;
+        }
     }
+    
+    //static Dictionary<object, Dictionary<string, IState>> _animStates = new Dictionary<object, Dictionary<string, IState>>();
+    Dictionary<int, IState> _animStates = new Dictionary<int, IState>();
+    IState _soloState = null;
 
     /// <summary>
     /// Add a new animation state to the manager only if no animation with the same object and channel is not playing
@@ -73,7 +79,6 @@ public class EasyAnimate
         _animStates[GetHash(pChannel)] =  pState;
 
     }
-    
 
     public T Get<T>(string pChannel) where T : IState {
         int hash = GetHash( pChannel);
@@ -95,12 +100,20 @@ public class EasyAnimate
         foreach (KeyValuePair<int, IState> kv in _animStates.ToArray()) {
             int key = kv.Key;
             IState e = kv.Value;
+            if (e.Paused) { 
+                e.StartTime += Time.deltaTime;
+            }
             if (!e.Update(Time.time)) {
                 _animStates.Remove(key);
+                if (_soloState == e) {
+                    UnpauseAll();
+                    _soloState = null;
+                }
                 e.Complete(); //must be called after key is removed in case the complete event triggers a reuse of the key.
             }
         }
     }
+
     /// <summary>
     /// tries to stop an animation
     /// </summary>
@@ -115,7 +128,7 @@ public class EasyAnimate
             return false;
         }
     }
-
+    
     /// <summary>
     /// tries to complete an animation
     /// </summary>
@@ -131,7 +144,19 @@ public class EasyAnimate
         else {
             return false;
         }
-
+    }
+    public void UnpauseAll() {
+        foreach (var e in _animStates.Values) {
+            e.Paused = false;
+        }
+    }
+    
+    public void Solo(string pKey) {
+        foreach (var e in _animStates.Values) {
+            e.Paused = true;
+        }
+        _soloState = Get<IState>(pKey);
+        _soloState.Paused = false;
     }
 
     internal void Clear() {
